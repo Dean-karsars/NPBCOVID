@@ -1,0 +1,17 @@
+name = "NPBCOVID"
+version = "0.1.0"
+license = "license"
+author = "Jane Doe"
+maintainer = "jane.doe@example.com"
+copyright = "Copyright 2023, Jane Doe"
+[build]
+auto-executables = true
+auto-tests = true
+auto-examples = true
+link = ["openblas"]
+[install]
+library = true
+
+[dependencies]
+functional.git = "https://github.com/wavebitscientific/functional-fortran"
+stdlib = { git="https://github.com/fortran-lang/stdlib", branch="stdlib-fpm" }
