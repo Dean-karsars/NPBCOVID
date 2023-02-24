@@ -348,7 +348,9 @@ module simple_rnd
                     a(k,j) = ( a(k,j) - sum ( a(1:k-1,k) * a(1:k-1,j) ) ) / a(k,k)
                 end do
                 s = a(j,j) - sum ( a(1:j-1,j)**2 )
+                
                 if ( s <= 0.0D+00 ) then
+                    print * , s
                     info = j
                     return
                 end if

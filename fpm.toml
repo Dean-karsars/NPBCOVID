@@ -5,13 +5,24 @@ author = "Jane Doe"
 maintainer = "jane.doe@example.com"
 copyright = "Copyright 2023, Jane Doe"
 [build]
-auto-executables = true
+auto-executables = false
 auto-tests = true
 auto-examples = true
 link = ["openblas"]
+
 [install]
-library = true
+library = false
+
+[library]
+include-dir = ["src"]
+
+[[executable]]
+name = "NPBCOVID"
+source-dir = "app"
+main = "main.f90"
+
 
 [dependencies]
 functional.git = "https://github.com/wavebitscientific/functional-fortran"
 stdlib = { git="https://github.com/fortran-lang/stdlib", branch="stdlib-fpm" }
+fortran-csv-module = { git="https://github.com/jacobwilliams/fortran-csv-module.git" }

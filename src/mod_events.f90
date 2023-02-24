@@ -12,9 +12,9 @@
 !>  "event" is an array of time points for a sequence of events
 !------------------------------------------------------------------------------
 module mod_events
-  use iso_fortran_env, only:real32, int32
+  use iso_fortran_env, only:real32, int32, real64
   use ieee_arithmetic
-  use functional, only: subscript, put => insert, arange
+  use functional, only: subscript, put => insert, arange, last
   use mod_prior, only:prior
   use m_mrgrnk, only:sort_index => mrgrnk
   use random_beta_mod, only:random_beta
@@ -34,13 +34,13 @@ module mod_events
   private
   public :: event, log_likelihood, Gauss_Pred, &
             Insert_Event, rand_int, Delete_Event, &
-            Update_Event, sample, gibbs_sampling, Update_Gaus
+            Update_Event, sample, gibbs_sampling, Update_Gaus, Update_shape_scale
   
   type :: event
     real(real32), allocatable :: time(:)
     integer(int32), allocatable :: outcome(:) !!"-1:Thinned", "1:Infection", "2:Diagnosis", "3:Undetected", 
                                               !!"4:Hospitalized", "5:Diagnosised to Recovered", "6:Undetected to Recovered"
-                                              !!"7:Hospitalsized to Suspect", "8:Recovered to Syspect", "9:Death", "10:Vaccination"
+                                              !!"7:Hospitalsized to Suspect", "8:Recovered to Suspect", "9:Death", "10:Vaccination"
                                               !!"11:Time Last
     integer(int32), allocatable :: group(:)
     integer(int32) :: num_groups, I_min_group
@@ -55,9 +55,6 @@ module mod_events
     real(real32) :: variance_scale
     integer(int32) :: MPA_Level = 1000
   contains
-    !procedure, pass(self) :: Insert
-    !procedure, pass(self) :: Update
-    !procedure, pass(self) :: Delete
     procedure, pass(self) :: output_time
     procedure, pass(self) :: output_parms
   end type event
@@ -97,6 +94,8 @@ contains
     real(real32), allocatable :: cov(:, :)
     real(real32), allocatable :: mean(:)
 
+    real(real32) :: res
+    integer :: info
     !automatic reallocate
     y%time = [time] 
     y%outcome = [outcome] 
@@ -140,6 +139,11 @@ contains
         !if(i == 1) print *, "group1 covariance matrix size is", size(cov, 1)
         allocate(mean, mold = y%time(Infec_loc)) 
         mean = 0
+        !call det(cov, res, info)
+        !print * , "group",  i, "det is",  res
+        !if(info /= 0) then
+          !stop
+        !end if
         y%gaus(Infec_loc) = random_mvn(cov, size(Infec_loc), mean) !assign sampled gaus value to corresponding location
         deallocate(mean)
       
@@ -186,6 +190,8 @@ contains
     v = 0        !住院
     w = 0        !康复
     res = 0
+    
+
     do i = 2, size(input%time) !注意左极限, 先算likelihood, 在更改人数参数
       select case(input%outcome(i))
         case(-1)!Thinned
@@ -465,13 +471,40 @@ contains
   subroutine output_time(self)
     class(event), intent(in) :: self
     integer(int32) :: i
-    print *, '      Time        |  Outcome | group | gaus  '
-    print *, '------------------+----------+-------+-------'
-    
+    character(100), allocatable :: outcome_char(:)
+    print *, '      Time        |  group | gaus  |      Outcome       '
+    print *, '------------------+--------+-------+--------------------'
+    allocate(outcome_char(size(self%outcome)))
     do i = 1, size(self%time)
-      write(*,'(f18.5, 5x, i3, 5x, i3, 3x, f7.3)') self%time(i), self%outcome(i), self%group(i), self%gaus(i)
+      select case(self%outcome(i))
+        case(-1) 
+          outcome_char(i) = "Thinned"
+        case(1)
+          outcome_char(i) = "Infection"
+        case(2)
+          outcome_char(i) = "Diagnosis"
+        case(3)
+          outcome_char(i) = "Undetected"
+        case(4)
+          outcome_char(i) = "Hospitalized"
+        case(5)
+          outcome_char(i) = "Diagnosis to Recovered" 
+        case(6)
+          outcome_char(i) = "Undetected to Recovered"
+        case(7)
+          outcome_char(i) = "Hospitalized to Suspect"
+        case(8)
+          outcome_char(i) = "Recovered to Suspect"
+        case(9)
+          outcome_char(i) = "Death"
+        case(10)
+          outcome_char(i) = "Vaccination"
+        case(11)
+          outcome_char(i) = "Time Last"
+      end select
+      write(*,'(f18.5, 5x, i3, x, f9.3, 4x,a)') self%time(i), self%group(i), self%gaus(i), trim(outcome_char(i))
     end do
-    
+    deallocate(outcome_char)
   end subroutine output_time
 
   subroutine output_parms(self)
@@ -551,8 +584,15 @@ contains
         adj_mat(i, j) = sqexp_cov(true(i), psedo(j), alpha, theta)
       end do column 
     end do row
-    
+    if(size(psedo) == 1) then
+      cov = 1/cov
+    end if
     call inv(size(psedo), cov, info)
+    if(info /= 0) then
+      res = ieee_value(res, ieee_quiet_nan)
+      return
+    end if
+
     !! mat[true * psedo] %*% mat[psedo * psedo]
     call sgemm("N",         & !TRANSA
                "N",         & !TRANSB
@@ -609,6 +649,7 @@ contains
     integer(int32) :: pgamma_parm1(input%num_groups), pgamma_parm2(input%num_groups) !shape1:e, shape2:E
     integer(int32) :: f(input%num_groups), a(input%num_groups), b(input%num_groups), g(input%num_groups)
 
+    logical, allocatable :: mask(:)
     !All paramters are initialized as 0
     beta_shape1 = 0
     beta_shape2 = 0
@@ -643,7 +684,6 @@ contains
 
 
     delta(input%I_min_group) = 1
-  
     do i = 2, size(input%time)
       select case(input%outcome(i))
       case(-1)!Thinned
@@ -1058,6 +1098,7 @@ contains
                     real(z, real32)
 
       case default
+        print *, "error value",input%outcome(i)
         error stop "Gibbs sampling, select case out of bound"
     end select
     end do
@@ -1076,6 +1117,7 @@ contains
                                                  input%priors%gamma(i, 1), real32), &
                                     scale = (input%priors%gamma(i, 2) + gamma_int(i)))
       !print *, "eta"
+      !print * , eta_int(1), u(1), input%log_likelihood
       input%eta(i) = random_gamma(shape = real(f(i) + input%priors%eta(i, 1), real32), &
                                   scale = (input%priors%eta(i, 2) + eta_int(i)))   
       !print *, "alpha"  
@@ -1104,8 +1146,12 @@ contains
         exit find_I_submin
       end if
     end do find_I_submin
-
+    
+    mask = input%time < (I_submin - I2_1) .and. (input%outcome == 2 .or. input%outcome == 4 .or. input%outcome == 10)
+    if(size(pack(mask, mask .eqv. .true.)) >= 1) return !Imin Gibbs 失败
     input%time(1) = I_submin - I2_1
+    
+
     input = Imin_exclude(input, input%time(1))
 
 
@@ -1123,7 +1169,7 @@ contains
     integer(int32) :: MPA(target%MPA_Level) !MPA sampled idx
     real(real32) :: NaN, unif
     logical, allocatable :: mask(:)
-    real(real32), allocatable :: old(:), old_gaus(:)
+    real(real32), allocatable :: old(:), old_gaus(:), time_interval
 
     NaN = ieee_value(NaN, class = ieee_quiet_nan)
     res = target
@@ -1141,11 +1187,16 @@ contains
       mask = (target%outcome == 1 .or. target%outcome == -1) &
               .and. target%group == group .and. target%time /= target%time(1)
       old = pack(target%time, mask)
+      
+      if(size(old) < 1) then !不存在old, 无法做出观测
+        res = target
+        return
+      end if
       old_gaus = pack(target%gaus, mask)
       
       if(num < target%MPA_Level) then
         res%gaus(idx) = Gauss_Pred(time, old, old_gaus, target%variance_scale, target%shape_scale(group))
-      
+        
       else !MPA: 此时old_gaus数量过大, 故抽取部分样本作为old_gaus 
         
         do while (isnan(res%gaus(idx)))
@@ -1162,14 +1213,17 @@ contains
     res%log_likelihood = log_likelihood(res)
     if(ieee_is_finite(res%log_likelihood)) then
       
+      mask = target%outcome == 1 .and. target%group == group !Find Ii1 !Possible bug
+      time_interval = last(target%time) - minval(pack(target%time, mask))  !时间区间
       unif = log(real(random_uniform(0.0, 1.0), real32))
-      if(((res%log_likelihood - target%log_likelihood) - log(real(num + 1, real32))) <= unif) then
+      if(log(time_interval)                            +&
+         ((res%log_likelihood - target%log_likelihood) -&
+         log(real(num + 1, real32))) <= unif) then
         res = target
       end if
     else 
       res = target
     end if
-
   end function Insert_Event
 
   function Delete_Event(time, outcome, group, target) result(res)
@@ -1181,7 +1235,8 @@ contains
 
     integer(int32) :: idx ! delete elem at loc idx
     integer(int32) :: num ! number of old data points
-    real(real32) :: unif
+    real(real32) :: unif, time_interval
+    logical, allocatable :: mask(:)
 
     res = target
     !Simply delete a time point
@@ -1201,15 +1256,17 @@ contains
     num = size(pack(target%outcome, target%outcome == outcome .and. target%group == group))
     res%log_likelihood = log_likelihood(res)
     unif = log(real(random_uniform(0.0, 1.0), real32))
-    
+    mask = target%outcome == 1 .and. target%group == group !Find Ii1 !Possible bug
+    time_interval = last(target%time) - minval(pack(target%time, mask))  !时间区间
     if(ieee_is_finite(res%log_likelihood)) then
-      if((log(real(num, real32)) + (res%log_likelihood - target%log_likelihood)) <= unif) then
+      if((log(real(num, real32))                      +&
+         (res%log_likelihood - target%log_likelihood) -&
+         log(time_interval)) <= unif) then
         res = target
       end if
     else 
       res = target
     end if
-  
   end function Delete_Event
 
   function Update_Event(old_time, new_time, outcome, group, target) result(res)
@@ -1264,8 +1321,9 @@ contains
       old_gaus = pack(target%gaus, mask)
       
       if(size(old) < target%MPA_Level) then
+
         res%gaus(new_idx) = Gauss_Pred(new_time, old, old_gaus, target%variance_scale, target%shape_scale(group))
-      
+
       else !MPA: 此时old_gaus数量过大, 故抽取部分样本作为old_gaus 
         
         do while (isnan(res%gaus(new_idx)))
@@ -1306,6 +1364,10 @@ contains
 
     Infec_loc = trueloc((y%outcome == 1 .or. y%outcome == -1) .and. y%group == group .and. y%time /= minval(y%time)) !exclude I min
     if(size(Infec_loc) <= y%MPA_Level) then 
+      if(size(Infec_loc) < 1) then
+        y = x
+        return
+      end if
       cov = cov_mat(y%time(Infec_loc), y%variance_scale, y%shape_scale(group)) !construct covariance matrix
         !if(i == 1) print *, "group1 covariance matrix size is", size(cov, 1)
       allocate(mean, mold = y%time(Infec_loc)) 
@@ -1314,10 +1376,12 @@ contains
       deallocate(mean)
       
     else !MPA
-      idx = rand_int(1, size(Infec_loc), y%MPA_Level)
-      call std_sort(idx)
-      y%gaus(Infec_loc) = MPA_sample(y%time(Infec_loc(idx)), y%time, y%variance_scale, y%shape_scale(group)) * &
-                          sqrt(1 - nu**2) + nu * y%gaus(Infec_loc)
+      do while(any(isnan(y%gaus(Infec_loc))))
+        idx = rand_int(1, size(Infec_loc), y%MPA_Level)
+        call std_sort(idx)
+        y%gaus(Infec_loc) = MPA_sample(y%time(Infec_loc(idx)), y%time, y%variance_scale, y%shape_scale(group)) * &
+                            sqrt(1 - nu**2) + nu * y%gaus(Infec_loc)
+      end do
     end if
 
   
@@ -1342,9 +1406,9 @@ contains
     type(event) :: y
     integer(int32), intent(in) :: group
 
-    real(real32), allocatable :: cov(:, :), gaus(:), new_cov(:, :)
+    real(real32), allocatable :: cov(:, :), gaus(:), new_cov(:, :), gaus_trans(:, :), gaus_mat(:, :)
     integer(int32), allocatable :: Infec_loc(:), idx(:)
-    real(real32) :: shape, unif, det_old, det_new
+    real(real32) :: shape, unif, det_old, det_new, up, down
     real(real32), allocatable :: old_garb1(:, :)
     real(real32), allocatable :: old_garb2(:, :)
     real(real32), allocatable :: new_garb1(:, :)
@@ -1354,14 +1418,17 @@ contains
     y = x
 
     shape = random_uvn(random_exp(lambda), 1.0)
-
+    y%shape_scale(group) = shape
 
     Infec_loc = trueloc((y%outcome == 1 .or. y%outcome == -1) .and. y%group == group .and. y%time /= minval(y%time)) !exclude I min
     if(size(Infec_loc) <= y%MPA_Level) then 
+      if(size(Infec_loc) <= 0) then 
+        y = x
+        return
+      end if
       cov = cov_mat(x%time(Infec_loc), x%variance_scale, x%shape_scale(group)) !construct covariance matrix
       new_cov = cov_mat(y%time(Infec_loc), y%variance_scale, shape) !construct new covariance matrix with new shape value
       gaus = x%gaus(Infec_loc)
-      
     else !MPA
       idx = rand_int(1, size(Infec_loc), x%MPA_Level)
       call std_sort(idx)
@@ -1371,25 +1438,65 @@ contains
     end if
 
     !Evaluate Likelihood
-    call det(cov, det_old, info)
-    call det(new_cov, det_new, info)
-    if(info /= 0) then
-      y = x
-      return
+    if (size(cov, 1) > 1 ) then
+      call det(cov, det_old, info)
+      if(info /= 0) then
+        !print * , "BAD MPA SAMPLING"
+        y = x
+        return
+      end if
+      call det(new_cov, det_new, info)
+      if(info /= 0) then
+        y = x
+        return
+      end if
+
+      call inv(size(new_cov, 1), new_cov, info)
+      if(info /= 0) then
+        y = x
+        return
+      end if
+    
+      call inv(size(cov, 1), cov, info)  
+      if(info /= 0) then
+        y = x
+        return
+      end if
+    else 
+      det_new = new_cov(1, 1)
+      det_old = cov(1, 1)
+      cov = 1/cov
+      new_cov = 1/new_cov
     end if
 
+
+
+    !cov and new_cov are now inversed
+    
     allocate(old_garb1(1, size(gaus)), &
              old_garb2(1, 1),          &
              new_garb1(1, size(gaus)), &
-             new_garb2(1, 1))
+             new_garb2(1, 1),          &
+             gaus_trans(1, size(gaus)),&
+             gaus_mat(size(gaus), 1))
+    gaus_trans(1, :) = gaus
+    gaus_mat = transpose(gaus_trans)
+    !new_garb2 => trans(gaus) %*% inv(new_cov) %*% gaus 
+    call sgemm("n", "n", 1, size(gaus), size(gaus), 1.0, gaus_trans, 1, new_cov, size(gaus), 0, new_garb1, 1)
+    call sgemm("n", "n", 1, size(gaus), size(gaus), 1.0, new_garb1, 1, gaus_mat, size(gaus), 0, new_garb2, 1)
+    !old_garb2 => trans(gaus) %*% inv(cov) %*% gaus 
+    call sgemm("n", "n", 1, size(gaus), size(gaus), 1.0, gaus_trans, 1, cov, size(gaus), 0, old_garb1, 1)
+    call sgemm("n", "n", 1, size(gaus), size(gaus), 1.0, old_garb1, 1, gaus_mat, size(gaus), 0, old_garb2, 1)
 
-    call sgemm()
-
+    up = -0.5 * log(det_new) + (-0.5 * new_garb2(1, 1) - lambda * shape)
+    down = -0.5 * log(det_old) + (-0.5 * old_garb2(1, 1) - lambda * x%shape_scale(group))
 
     unif = log(real(random_uniform(), real32))
-
-
-
+    if ( (up - down) <= unif ) then
+      y = x
+      return
+    end if
+    
   end function Update_shape_scale
 
   function Gauss_Pred(new, old, gaus, alpha, theta) result(res)
@@ -1417,9 +1524,12 @@ contains
     end do
 
     K3 = transpose(K1)
+    if(size(old) == 1) then
+      K2 = 1/K2
+    end if
     call inv(size(old), K2, info)
     if(info /= 0) then
-      res = ieee_value(res, ieee_quiet_nan)
+      res = ieee_value(res, ieee_signaling_nan)
       return
     end if
 
@@ -1428,7 +1538,10 @@ contains
     call sgemm('n', 'n', 1, 1, size(old), 1.0, Garb, 1, K3, size(old), 0, var, 1) !var vector finished
 
     var = -1.0 * var + sqexp_cov(new, new, alpha, theta)
-    if(var(1, 1) <= 0) var = 0.0000001
+    if(var(1, 1) <= 0) then
+      res = mean(1)
+      return
+    end if
     res = random_uvn(mean(1), var(1, 1))
     
 

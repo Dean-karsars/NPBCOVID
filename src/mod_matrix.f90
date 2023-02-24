@@ -37,7 +37,7 @@ contains
             Bmat(i,i)= zone
         end do
         call sgesv(ndim,ndim,Amat,ndim,ipiv,Bmat,ndim,info)
-        if(info.ne.0)print *,'Function INV Failed: sgesv error'
+        if(info.ne.0) print *,'Function INV Failed: sgesv error', "ndim = ", ndim
         Amat=Bmat
         return
     end subroutine inv
@@ -74,8 +74,9 @@ contains
         
         ! Check for errors
         if (info /= 0) then
-            print *, 'Error: DGETRF failed'
-            stop
+            !print *, 'Error: DGETRF failed'
+            res = 0
+            return
         end if
 
         ! Compute the determinant as the product of diagonal elements of U 

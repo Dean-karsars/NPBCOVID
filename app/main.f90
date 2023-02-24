@@ -1,23 +1,125 @@
 program main
   use iso_fortran_env, only:real32, int32
-  use simple_rnd, only: random_mvn => mnorm_smp
-  use stdlib_stats, only:var
-  use mod_matrix
-  implicit none
-  real(real32) :: cov22(2, 2) = reshape([2.0, 1.0, 0.0, 1.0], [2, 2]), &
-                  mean(2) = [-113.012342, 200.022], res(100000, 2), &
-                  AAA(2, 2) = reshape([2, 0, 0, 2], [2, 2]), &
-                  xxx(2, 2), ah
-  integer :: i, info
-  call mat_mul(2, cov22, AAA, xxx)
-  do i = 1, 2
-    write(*,'(*(f12.6,3x))') cov22(i,:)
-  end do
-  
-  !call inv(2, cov22, info)
-  
+  use mod_events, only:event, Delete_Event, Update_Event, Insert_Event, sample, gibbs_sampling, &
+                       Update_Gaus, Update_shape_scale
+  use mod_io, only:read_event_data
+  use mod_prior, only:prior
+  use mod_data
+  use forbear, only : bar_object
+  use stdlib_stats_distribution_uniform, only: random_uniform => rvs_uniform
+  use functional, only: subscript, put => insert, arange, last, sort
+  use stdlib_stats, only: mean
 
-  call det(cov22, ah, info)
-  print * , "det = ", ah
-  
-end program
+  implicit none
+    !Data Readin
+    type(event) :: sim
+    character(*), parameter :: filename = "data/Fortran.csv"
+    real(real32), allocatable :: time(:)
+    integer(int32), allocatable :: outcome(:)
+    integer(int32), allocatable :: group(:)
+    !Loop Variables
+    real(real32), allocatable :: sample_vector(:)
+    logical, allocatable :: mask(:)
+    real(real32), allocatable :: result(:)
+    type(bar_object) :: bar
+    integer(int32) :: loop_group, i, j
+    integer(int32), parameter :: step(7) = [-1, 3, 5, 6, 7, 8, 9]
+    real(real32) :: new
+    integer(int32), parameter :: n_iter = 10000
+
+    call read_event_data(filename, time, outcome, group)
+    
+    p_prior = prior(beta = beta, p_gamma = p_gamma, gamma = gamma, eta = eta, &
+                    alpha = alpha, tau = tau, omega = omega, p_theta = p_theta, theta = theta)           
+    sim = event(time, outcome, group, N, 1, p_prior, variance_scale, shape_scale)
+    
+    call sim%output_time()
+    print *, "********************************************************************************************************************"
+    call sim%output_parms()
+    print * , "********************************************************************************************************************"
+    call bar%initialize(filled_char_string='+', prefix_string='progress |', suffix_string='| ', add_progress_percent=.true., &
+                        max_value = real(n_iter, real64))
+    call bar%start
+    allocate(result(n_iter))
+    do i = 1, n_iter
+      call bar%update(real(i, real64))
+      !group
+      if(sim%num_groups > 1) then
+        loop_group = random_uniform(1, sim%num_groups - 1)
+      else 
+        loop_group = 1
+      end if
+      
+      !Infection Insert or Update
+      if ( random_uniform(1) == 0 ) then
+        ! Insert
+        new = random_uniform(sim%time(1), last(sim%time) - sim%time(1))
+        sim = Insert_Event(new, 1, loop_group, sim)
+      else 
+        ! Delete
+        mask = sim%outcome == 1 .and. sim%group == loop_group .and. sim%time /= sim%time(1)
+        sample_vector = pack(sim%time, mask)
+        if(size(sample_vector) >= 1) then
+          new = sample(sample_vector)
+          sim = Delete_Event(new, 1, loop_group, sim)
+        end if
+      end if
+   
+      !Infection Update
+      new = random_uniform(sim%time(1), last(sim%time) - sim%time(1))
+      mask = sim%outcome == 1 .and. sim%group == loop_group .and. sim%time /= sim%time(1)
+      sample_vector = pack(sim%time, mask)
+      if(size(sample_vector) >= 1) then
+        sim = Update_Event(sample(sample_vector), new, 1, loop_group, sim)
+      end if
+
+      do j = 1, 7 !M-H for other events
+        !Insert or Update
+        if ( random_uniform(1) == 0 ) then
+          ! Insert
+          mask = sim%outcome == 1 .and. sim%group == loop_group !Find Ii1
+          sample_vector = pack(sim%time, mask)
+          if(size(sample_vector) >= 1) then
+            new = random_uniform(minval(pack(sim%time, mask)), last(sim%time) - minval(pack(sim%time, mask))) !sample from[Ii1, T]
+            sim = Insert_Event(new, step(j), loop_group, sim)
+          end if
+        else 
+          ! Delete
+          mask = sim%outcome == step(j) .and. sim%group == loop_group .and. sim%time /= sim%time(1)
+          sample_vector = pack(sim%time, mask)
+          if(step(j) == -1) then
+            if(size(sample_vector) > 1) then
+              new = sample(sample_vector)
+              sim = Delete_Event(new, step(j), loop_group, sim)
+            end if
+          else  !若为Thinned事件, 则size需>1，否则 >=1
+            if(size(sample_vector) >= 1) then
+              new = sample(sample_vector)
+              sim = Delete_Event(new, step(j), loop_group, sim)
+            end if 
+          end if
+
+        end if
+
+        !Update
+        mask = sim%outcome == 1 .and. sim%group == loop_group !Find Ii1
+        new = random_uniform(minval(pack(sim%time, mask)), last(sim%time) - minval(pack(sim%time, mask))) !sample from[Ii1, T]
+        mask = sim%outcome == step(j) .and. sim%group == loop_group .and. sim%time /= sim%time(1)
+        sample_vector = pack(sim%time, mask)
+        if(size(sample_vector) >= 1) then
+          sim = Update_Event(sample(sample_vector), new, step(j), loop_group, sim)
+        end if
+      end do
+
+      sim = Update_Gaus(sim, loop_group)
+      sim = Update_shape_scale(1.0, loop_group, sim)
+
+      call gibbs_sampling(sim)
+
+      result(i) = sim%beta(1)
+      !call sim%output_time
+    end do
+    print * , "FINALL:", mean(result(n_iter/2:n_iter))
+    call sim%output_parms
+    call sim%output_time
+end program main

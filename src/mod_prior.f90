@@ -1,10 +1,8 @@
 module mod_prior
     use iso_fortran_env, only:real32, int32
     implicit none
-    
     private
     public :: prior
-
     type :: prior
         real(real32), allocatable :: beta(:, :), p_gamma(:, :), gamma(:, :), eta(:, :), alpha(:, :), tau(:, :), omega(:, :)
         real(real32), allocatable :: p_theta(:), theta(:)
@@ -15,6 +13,8 @@ module mod_prior
     interface prior
         module procedure :: prior_constructor
     end interface
+    
+
 
 contains
     pure function prior_constructor(beta, p_gamma, gamma, eta, &
@@ -38,18 +38,23 @@ contains
     end function prior_constructor
 
     subroutine output(self)
-        class(prior), intent(in) :: self
+        class(prior), intent(inout) :: self
         integer(int32) :: i
-        print *, ' Group | beta  |p_gamma| gamma |  eta  | alpha |  tau  |  omega'
-        print *, '-------+-------+-------+-------+-------+-------+-------+-------'
-        
-        do i = 1, size(self%beta)
-          write(*,'(i3, 5x, 7(f7.3, x, f7.3))') i,self%beta(i, :), self%p_gamma(i, :), self%gamma(i, :), &
-                                         self%eta(i, :), self%alpha(i, :), self%tau(i, :), self%omega(i,:)
+print *, ' Group |  beta1 | beta2 |p_gamma1|p_gamma2|gamma1|gamma2|eta1| eta2 | alpha1 | alpha2 | tau1 | tau2 | omega1 &
+         | omega2'
+print *, '-------+--------+-------+--------+--------+------+------+----+------+-------+---------+------+------+--------&
+         +-------'
+        do i = 1, size(self%beta(:, 1))
+            
+            print'(i3, 5x, 7(f7.3, x, f7.3, 3x))', i,self%beta(i, :), self%p_gamma(i, :), self%gamma(i, :), &
+                                             self%eta(i, :), self%alpha(i, :), self%tau(i, :), self%omega(i,:)
         end do
-        print *, ' p_theta|theta'
-        print *, '--------+-----'
-        write(*,'(2(f7.3, x, f7.3))') self%p_theta, self%theta
+        
+        print *, ' p_theta1|p_theta2|theta1|  theta2  '
+        print *, '---------+--------+------+----------'
+        print '(2(f7.3, 3x, f7.3, x))', self%p_theta, self%theta
+
+
     end subroutine output
 
 end module mod_prior
