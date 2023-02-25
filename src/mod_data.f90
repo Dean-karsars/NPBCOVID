@@ -13,6 +13,11 @@ module mod_data
     real(real32) :: p_theta(2) = [1, 1], theta(2) = [1, 1]
     type(prior) :: p_prior
     integer(int32), parameter :: N(1) = [100]
-    real(real32) :: shape_scale(1) = [0.0006], variance_scale = 20
+    real(real32) :: shape_scale(1) = [0.00001], variance_scale = 2
+    real(real32), allocatable :: beta_sample(:, :), pgamma_sample(:, :), gamma_sample(:, :), &
+        alpha_sample(:, :), tau_sample(:, :), omega_sample(:, :),eta_sample(:, :), &
+        ptheta_sample(:, :), theta_sample(:, :)
+    
+
     
 end module mod_data

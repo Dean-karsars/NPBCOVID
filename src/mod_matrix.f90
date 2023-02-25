@@ -1,4 +1,6 @@
 module mod_matrix
+    use iso_fortran_env, only:real32
+    use ieee_arithmetic
     implicit none
     
 contains
@@ -37,30 +39,36 @@ contains
             Bmat(i,i)= zone
         end do
         call sgesv(ndim,ndim,Amat,ndim,ipiv,Bmat,ndim,info)
-        if(info.ne.0) print *,'Function INV Failed: sgesv error', "ndim = ", ndim
+        !if(info.ne.0) print *,'Function INV Failed: sgesv error', "ndim = ", ndim
         Amat=Bmat
         return
     end subroutine inv
 
     ! performs matrix-matrix multiply
 ! C := alpha*op( A )*op( B ) + beta*C
-    subroutine mat_mul(nmatdim,A,B,C)  
+    function mat_mul(A,B)  result(C)
         ! nmatdim is dimension of matrix
         implicit none
-        integer,parameter::dp = 4 ! double precision(精度控制)
-        integer,intent(in)::nmatdim    
+        integer,parameter::dp = real32 ! double precision(精度控制)
         real(dp)::ALPHA
         real(dp)::BETA 
-        real(dp),intent(in) ::A(nmatdim ,nmatdim)
-        real(dp),intent(in) ::B(nmatdim ,nmatdim)
+        real(dp),intent(in) ::A(:, :)
+        real(dp),intent(in) ::B(:, :)
         !complex(dp)::mat_mul(nmatdim,nmatdim)
-        real(dp),intent(out)::C(nmatdim,nmatdim)
+        real(dp) , allocatable :: C(:, :)
+        integer :: m, n, k
         alpha = 1.0
         beta = 0.0
+        allocate(C(m,n))
         C(:,:) = (0.00,0.00)
-        call SGEMM('N','N',nmatdim,nmatdim,nmatdim,ALPHA,A,nmatdim,B,nmatdim,BETA,C,nmatdim)
-        return
-    end subroutine mat_mul
+        m = size(A, 1) !rows of A
+        n = size(B, 2) !columns of B
+        k = size(A, 2) !columns of A
+        
+
+        call SGEMM('N','N', m, n, k, ALPHA, A, m, B, k, BETA, C, m)
+        
+    end function mat_mul
 
     subroutine det(mat, res, info)
         real(4), intent(in) :: mat(:, :)
@@ -75,7 +83,7 @@ contains
         ! Check for errors
         if (info /= 0) then
             !print *, 'Error: DGETRF failed'
-            res = 0
+            res = ieee_value(res, ieee_quiet_nan)
             return
         end if
 
@@ -96,4 +104,37 @@ contains
         end do
        
     end subroutine det
+
+    subroutine cholesky_det(mat, res, info)
+        real(real32), intent(in) :: mat(:, :)
+        integer, intent(out) :: info
+        real(real32), intent(inout) :: res
+        
+        real(real32) :: det_a ! 行列式det(A)
+        real(real32) :: det_l ! 行列式det(L)
+        integer :: i, j! 循环变量 
+        integer :: n ! 矩阵的维度
+        n = size(mat, 1) 
+
+        call spotrf('L', n, mat, n, info)
+        ! 检查返回值是否正常
+        if (info /= 0) then
+            !print *, 'dpotrf failed with info = ', info
+            !stop
+            res = ieee_value(res, ieee_quiet_nan)
+            return
+        end if
+
+        
+        ! 计算det(L)为主对角线元素的乘积
+        det_l = 1.0
+        do i = 1,n
+            det_l = det_l * mat(i,i)
+        end do
+
+        ! 计算det(A)为(det(L))^2
+        det_a = det_l**2
+        res = det_a
+
+    end subroutine cholesky_det
 end module mod_matrix

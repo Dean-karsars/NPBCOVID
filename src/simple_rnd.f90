@@ -9,6 +9,8 @@
 !* incorporated in the _SIMPLE_ library, HE 2009-06-25
 ! 
 module simple_rnd
+    use iso_fortran_env, only:real32, int32
+    use ieee_arithmetic
     implicit none
     
     private :: idum, r8po_fa
@@ -263,10 +265,12 @@ module simple_rnd
             r = cov
             call r8po_fa ( m, r, info )
             if ( info /= 0 ) then
-                write ( *, '(a)' ) ' '
-                write ( *, '(a)' ) 'mnorm_smp - Fatal error!'
-                write ( *, '(a)' ) 'The variance-covariance matrix is not positive definite symmetric'
-                stop
+                !write ( *, '(a)' ) ' '
+                !write ( *, '(a)' ) 'mnorm_smp - Fatal error!'
+                !write ( *, '(a)' ) 'The variance-covariance matrix is not positive definite symmetric'
+                !stop
+                x = ieee_value(x, ieee_quiet_nan)
+                return
             end if
             ! Samples of the 1D normal distribution with mean 0 and variance 1.
             do i=1,m
@@ -350,7 +354,7 @@ module simple_rnd
                 s = a(j,j) - sum ( a(1:j-1,j)**2 )
                 
                 if ( s <= 0.0D+00 ) then
-                    print * , s
+                    !print * , s
                     info = j
                     return
                 end if

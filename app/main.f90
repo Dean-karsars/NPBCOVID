@@ -2,7 +2,7 @@ program main
   use iso_fortran_env, only:real32, int32
   use mod_events, only:event, Delete_Event, Update_Event, Insert_Event, sample, gibbs_sampling, &
                        Update_Gaus, Update_shape_scale
-  use mod_io, only:read_event_data
+  use mod_io, only:read_event_data, write_event_data
   use mod_prior, only:prior
   use mod_data
   use forbear, only : bar_object
@@ -19,13 +19,12 @@ program main
     integer(int32), allocatable :: group(:)
     !Loop Variables
     real(real32), allocatable :: sample_vector(:)
-    logical, allocatable :: mask(:)
-    real(real32), allocatable :: result(:)
+    logical, allocatable :: mask(:) 
     type(bar_object) :: bar
     integer(int32) :: loop_group, i, j
     integer(int32), parameter :: step(7) = [-1, 3, 5, 6, 7, 8, 9]
     real(real32) :: new
-    integer(int32), parameter :: n_iter = 10000
+    integer(int32), parameter :: n_iter = 10
 
     call read_event_data(filename, time, outcome, group)
     
@@ -38,9 +37,11 @@ program main
     call sim%output_parms()
     print * , "********************************************************************************************************************"
     call bar%initialize(filled_char_string='+', prefix_string='progress |', suffix_string='| ', add_progress_percent=.true., &
-                        max_value = real(n_iter, real64))
+                        max_value = real(n_iter, real64), add_date_time = .true., add_progress_speed = .true.)
     call bar%start
-    allocate(result(n_iter))
+    allocate(beta_sample(n_iter, sim%num_groups), pgamma_sample(n_iter, sim%num_groups), gamma_sample(n_iter, sim%num_groups), &
+             eta_sample(n_iter, sim%num_groups), alpha_sample(n_iter, sim%num_groups), tau_sample(n_iter, sim%num_groups), &
+             omega_sample(n_iter, sim%num_groups), ptheta_sample(n_iter, 1), theta_sample(n_iter,1))
     do i = 1, n_iter
       call bar%update(real(i, real64))
       !group
@@ -112,14 +113,32 @@ program main
       end do
 
       sim = Update_Gaus(sim, loop_group)
-      sim = Update_shape_scale(1.0, loop_group, sim)
+      sim = Update_shape_scale(10.0, loop_group, sim)
 
       call gibbs_sampling(sim)
 
-      result(i) = sim%beta(1)
+      beta_sample(i, :) = sim%beta
+      pgamma_sample(i, :) = sim%p_gamma
+      gamma_sample(i, :) = sim%gamma
+      alpha_sample(i, :) = sim%alpha
+      tau_sample(i, :) = sim%tau
+      omega_sample(i, :) = sim%omega
+      eta_sample(i, :) = sim%eta
+      ptheta_sample(i, :) = sim%p_theta
+      theta_sample(i, :) = sim%theta
       !call sim%output_time
     end do
-    print * , "FINALL:", mean(result(n_iter/2:n_iter))
+    print * , "FINALL:", mean(beta_sample(n_iter/2:n_iter, 1))
     call sim%output_parms
     call sim%output_time
+    print * , "Shape:", sim%shape_scale
+    call write_event_data("data/beta_sample.csv", beta_sample)
+    call write_event_data("data/pgamma_sample.csv", pgamma_sample)
+    call write_event_data("data/gamma_sample.csv", gamma_sample)
+    call write_event_data("data/alpha_sample.csv", alpha_sample)
+    call write_event_data("data/tau_sample.csv", tau_sample)
+    call write_event_data("data/omega_sample.csv", omega_sample)
+    call write_event_data("data/eta_sample.csv", eta_sample)
+    call write_event_data("data/ptheta_sample.csv", ptheta_sample)
+    call write_event_data("data/theta_sample.csv", theta_sample)
 end program main

@@ -27,7 +27,7 @@ module mod_events
   use stdlib_sorting, only: ord_sort, std_sort => sort
   use stdlib_selection, only:select
   use stdlib_stats_distribution_uniform, only: shuffle
-  use mod_matrix, only:inv, det
+  use mod_matrix, only:inv, det => cholesky_det, mat_mul
 
   implicit none
   
@@ -139,18 +139,14 @@ contains
         !if(i == 1) print *, "group1 covariance matrix size is", size(cov, 1)
         allocate(mean, mold = y%time(Infec_loc)) 
         mean = 0
-        !call det(cov, res, info)
-        !print * , "group",  i, "det is",  res
-        !if(info /= 0) then
-          !stop
-        !end if
         y%gaus(Infec_loc) = random_mvn(cov, size(Infec_loc), mean) !assign sampled gaus value to corresponding location
+        if(any(isnan(y%gaus(Infec_loc)))) error stop "random_mvn failed"
         deallocate(mean)
       
       else !MPA
         idx = rand_int(1, size(Infec_loc), y%MPA_Level)
         call std_sort(idx)
-        y%gaus(Infec_loc) = MPA_sample(y%time(Infec_loc(idx)), y%time, y%variance_scale, y%shape_scale(i))
+        y%gaus(Infec_loc) = MPA_sample(y%time(Infec_loc(idx)), y%time(Infec_loc), y%variance_scale, y%shape_scale(i))
       end if
 
     end do  
@@ -578,7 +574,10 @@ contains
     mean = 0
     cov = cov_mat(psedo, alpha, theta)
     psedo_gaus = random_mvn(cov, size(mean), mean)
-
+    if(any(isnan(psedo_gaus))) then
+      res = ieee_value(res, ieee_quiet_nan)
+      return
+    end if
     row: do concurrent(i = 1:size(true))
       column: do concurrent(j = 1:size(psedo))
         adj_mat(i, j) = sqexp_cov(true(i), psedo(j), alpha, theta)
@@ -1167,6 +1166,7 @@ contains
     integer(int32) :: idx ! new elem's loc
     integer(int32) :: num ! number of old data points
     integer(int32) :: MPA(target%MPA_Level) !MPA sampled idx
+    integer(int32) :: max_iter = 0 ! MPA最大循环次数
     real(real32) :: NaN, unif
     logical, allocatable :: mask(:)
     real(real32), allocatable :: old(:), old_gaus(:), time_interval
@@ -1200,10 +1200,15 @@ contains
       else !MPA: 此时old_gaus数量过大, 故抽取部分样本作为old_gaus 
         
         do while (isnan(res%gaus(idx)))
+          max_iter = max_iter + 1
           MPA = rand_int(1, num, target%MPA_Level)
           call std_sort(MPA)
           res%gaus(idx) = Gauss_Pred(time, subscript(old, MPA), subscript(old_gaus, MPA), &
                                      target%variance_scale, target%shape_scale(group))
+          if(max_iter > 1000) then
+            res = target
+            return
+          end if
         end do
       
       end if
@@ -1358,8 +1363,8 @@ contains
     real(real32), allocatable :: cov(:, :), mean(:)
     integer(int32), allocatable :: Infec_loc(:), idx(:)
     real(real32), parameter :: nu = 0.5
-    real(real32) :: unif
-
+    real(real32) :: unif, cov_det
+    integer :: info
     y = x
 
     Infec_loc = trueloc((y%outcome == 1 .or. y%outcome == -1) .and. y%group == group .and. y%time /= minval(y%time)) !exclude I min
@@ -1373,7 +1378,13 @@ contains
       allocate(mean, mold = y%time(Infec_loc)) 
       mean = 0
       y%gaus(Infec_loc) = sqrt(1 - nu**2) * random_mvn(cov, size(Infec_loc), mean) + nu * y%gaus(Infec_loc)!assign sampled gaus value to corresponding location
+      if(any(isnan(y%gaus(Infec_loc)))) then
+        y = x
+        return
+      end if
       deallocate(mean)
+
+
       
     else !MPA
       do while(any(isnan(y%gaus(Infec_loc))))
@@ -1415,9 +1426,10 @@ contains
     real(real32), allocatable :: new_garb2(:, :)
 
     integer(int32) :: info, i
+    
     y = x
-
-    shape = random_uvn(random_exp(lambda), 1.0)
+    
+    shape = random_uvn(random_exp(lambda), 0.1)
     y%shape_scale(group) = shape
 
     Infec_loc = trueloc((y%outcome == 1 .or. y%outcome == -1) .and. y%group == group .and. y%time /= minval(y%time)) !exclude I min
@@ -1473,30 +1485,39 @@ contains
 
     !cov and new_cov are now inversed
     
-    allocate(old_garb1(1, size(gaus)), &
-             old_garb2(1, 1),          &
-             new_garb1(1, size(gaus)), &
-             new_garb2(1, 1),          &
-             gaus_trans(1, size(gaus)),&
-             gaus_mat(size(gaus), 1))
+    !allocate(old_garb1(1, size(gaus)), &
+             !old_garb2(1, 1),          &
+             !new_garb1(1, size(gaus)), &
+             !new_garb2(1, 1),          &
+             !gaus_trans(1, size(gaus)),&
+             !gaus_mat(size(gaus), 1))
+    allocate(gaus_trans(1, size(gaus)), gaus_mat(size(gaus), 1))
+             
     gaus_trans(1, :) = gaus
     gaus_mat = transpose(gaus_trans)
+
     !new_garb2 => trans(gaus) %*% inv(new_cov) %*% gaus 
-    call sgemm("n", "n", 1, size(gaus), size(gaus), 1.0, gaus_trans, 1, new_cov, size(gaus), 0, new_garb1, 1)
-    call sgemm("n", "n", 1, size(gaus), size(gaus), 1.0, new_garb1, 1, gaus_mat, size(gaus), 0, new_garb2, 1)
+    !call sgemm("n", "n", 1, size(gaus), size(gaus), 1.0, gaus_trans, 1, new_cov, size(gaus), 0, new_garb1, 1)
+    !call sgemm("n", "n", 1, size(gaus), size(gaus), 1.0, new_garb1, 1, gaus_mat, size(gaus), 0, new_garb2, 1)
     !old_garb2 => trans(gaus) %*% inv(cov) %*% gaus 
-    call sgemm("n", "n", 1, size(gaus), size(gaus), 1.0, gaus_trans, 1, cov, size(gaus), 0, old_garb1, 1)
-    call sgemm("n", "n", 1, size(gaus), size(gaus), 1.0, old_garb1, 1, gaus_mat, size(gaus), 0, old_garb2, 1)
+    !call sgemm("n", "n", 1, size(gaus), size(gaus), 1.0, gaus_trans, 1, cov, size(gaus), 0, old_garb1, 1)
+    !call sgemm("n", "n", 1, size(gaus), size(gaus), 1.0, old_garb1, 1, gaus_mat, size(gaus), 0, old_garb2, 1)
+
+    new_garb1 = matmul(gaus_trans, new_cov)
+    new_garb2 = matmul(new_garb1, gaus_mat)
+
+    old_garb1 = matmul(gaus_trans, cov)
+    old_garb2 = matmul(old_garb1, gaus_mat)
+    
 
     up = -0.5 * log(det_new) + (-0.5 * new_garb2(1, 1) - lambda * shape)
     down = -0.5 * log(det_old) + (-0.5 * old_garb2(1, 1) - lambda * x%shape_scale(group))
-
+    !deallocate(old_garb1, old_garb2, new_garb1, new_garb2, gaus_trans, gaus_mat)
     unif = log(real(random_uniform(), real32))
     if ( (up - down) <= unif ) then
       y = x
       return
     end if
-    
   end function Update_shape_scale
 
   function Gauss_Pred(new, old, gaus, alpha, theta) result(res)
@@ -1529,7 +1550,7 @@ contains
     end if
     call inv(size(old), K2, info)
     if(info /= 0) then
-      res = ieee_value(res, ieee_signaling_nan)
+      res = ieee_value(res, ieee_quiet_nan)
       return
     end if
 

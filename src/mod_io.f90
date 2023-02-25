@@ -7,7 +7,7 @@ module mod_io
 
     implicit none
     private
-    public :: read_event_data
+    public :: read_event_data, write_event_data, write_sim_data
 contains
     subroutine read_event_data(filename, time, outcome, group)
     ! Read processed weather data from a CSV file.
@@ -40,4 +40,53 @@ contains
 
     end subroutine read_event_data
     
+    subroutine write_event_data(filename, array)
+      character(len=*),intent(in) :: filename
+      real,intent(in) :: array(:, :)
+      type(csv_file) :: f
+      logical :: status_ok
+      integer(int32) :: i, n
+
+      ! set optional inputs:
+      call f%initialize(verbose = .true.)
+      ! open the file
+      call f%open(filename, n_cols = size(array, 2), status_ok=status_ok)
+      ! add header
+      call f%add([filename])
+      call f%next_row()
+      ! add some data:
+      n = size(array, 1)
+      do i = 1, n
+        call f%add(array(i, :), real_fmt='(F20.15)')
+        call f%next_row()
+      end do
+      ! finished
+      call f%close(status_ok)
+      
+    end subroutine
+
+    subroutine write_sim_data(filename, time, outcome, group)
+      character(len=*),intent(in) :: filename
+      real(real32),intent(in) :: time(:)
+      integer(int32),intent(in) :: outcome(:)
+      integer(int32),intent(in) :: group(:)
+
+      type(csv_file) :: f
+      logical :: status_ok
+      integer(int32) :: i, n
+      ! set optional inputs:
+      call f%initialize(verbose = .true.)
+      ! open the file
+      call f%open(filename, n_cols = 3, status_ok=status_ok)
+      ! add some data:
+      n = size(time, 1)
+      do i = 1, n
+        call f%add([time(i)], real_fmt='(F20.15)')
+        call f%add([outcome(i), group(i)])
+        call f%next_row()
+      end do
+      ! finished
+      call f%close(status_ok)
+      
+    end subroutine write_sim_data
 end module mod_io

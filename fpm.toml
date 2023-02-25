@@ -1,9 +1,9 @@
 name = "NPBCOVID"
 version = "0.1.0"
 license = "license"
-author = "Jane Doe"
+author = "Yao Gongzheng"
 maintainer = "jane.doe@example.com"
-copyright = "Copyright 2023, Jane Doe"
+copyright = "Copyright 2023, Yao Gongzheng"
 [build]
 auto-executables = false
 auto-tests = true
